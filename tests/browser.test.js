@@ -25,10 +25,15 @@ const browser = process.env.CHROME_BIN && existsSync(process.env.CHROME_BIN)
   return null;
   })();
 
-test("Chrome checks registration flow and responsive layout from 320px to desktop", { timeout: 60000 }, async (t) => {
+test("production preview loads CodeEditor and registration layout from 320px to desktop", { timeout: 60000 }, async (t) => {
   assert.ok(browser, "Chrome or Edge is required for the browser test; install it or set CHROME_BIN.");
+  const build = spawnSync(process.execPath, [path.join(projectRoot, "node_modules/vite/bin/vite.js"), "build"], {
+    cwd: projectRoot, encoding: "utf8", windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+  });
+  assert.equal(build.status, 0, `Production build failed before browser test:\n${build.stdout}\n${build.stderr}`);
+
   const profile = mkdtempSync(path.join(tmpdir(), "codeshare-chrome-"));
-  const vite = spawn(process.execPath, [path.join(projectRoot, "node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5183", "--strictPort"], {
+  const vite = spawn(process.execPath, [path.join(projectRoot, "node_modules/vite/bin/vite.js"), "preview", "--host", "127.0.0.1", "--port", "5183", "--strictPort"], {
     cwd: projectRoot, stdio: "ignore", windowsHide: true, detached: process.platform !== "win32",
   });
   const chrome = spawn(browser, [
@@ -164,8 +169,13 @@ test("Chrome checks registration flow and responsive layout from 320px to deskto
 
   let sequence = 0;
   const pending = new Map();
+  const runtimeErrors = [];
   socket.addEventListener("message", (event) => {
     const packet = JSON.parse(event.data);
+    if (packet.method === "Runtime.exceptionThrown") {
+      runtimeErrors.push(packet.params.exceptionDetails.exception?.description || packet.params.exceptionDetails.text);
+      return;
+    }
     if (!packet.id || !pending.has(packet.id)) return;
     const { resolve, reject } = pending.get(packet.id);
     pending.delete(packet.id);
@@ -186,6 +196,19 @@ test("Chrome checks registration flow and responsive layout from 320px to deskto
 
   await send("Page.enable");
   await send("Runtime.enable");
+  await send("Page.addScriptToEvaluateOnNewDocument", { source: `
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input.url, window.location.href);
+      if (url.pathname === "/api/auth/me") {
+        return new Response(JSON.stringify({ user: { id: "browser-test-user", name: "Ada Lovelace", email: "ada@example.com" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.pathname === "/api/snippets") {
+        return new Response(JSON.stringify({ snippets: [], pages: 1 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return originalFetch(input, init);
+    };
+  ` });
   await send("Page.navigate", { url: "http://127.0.0.1:5183/" });
   await waitFor(() => evaluate("Boolean(document.querySelector('.auth-card'))"), "registration form");
 
@@ -198,14 +221,25 @@ test("Chrome checks registration flow and responsive layout from 320px to deskto
   assert.equal(await evaluate("Boolean(document.querySelector('input[name=name]'))"), false, "existing accounts have a login form");
   await evaluate("document.querySelector('.auth-switch button').click(); new Promise(r => setTimeout(r, 50))");
 
+  await evaluate("sessionStorage.setItem('codeshare_token', 'production-browser-test-token')");
+  await send("Page.reload", { ignoreCache: true });
+  try {
+    await waitFor(() => evaluate("Boolean(document.querySelector('.cm-editor'))"), "CodeEditor from the production preview");
+  } catch (error) {
+    const pageState = await evaluate("JSON.stringify({ url: location.href, title: document.title, text: document.body.innerText.slice(0, 1200) })").catch(() => "<page context unavailable>");
+    throw new Error(`${error.message}\nRuntime exceptions: ${runtimeErrors.join("; ") || "<none captured>"}\nPage state: ${pageState}`);
+  }
+  await delay(250);
+  assert.deepEqual(runtimeErrors, [], `production preview raised JavaScript exceptions: ${runtimeErrors.join("; ")}`);
+
   const measurements = [];
   for (const width of [320, 375, 768, 1024, 1440]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 650 });
     await delay(80);
     measurements.push(await evaluate(`(() => {
       const root = document.documentElement;
-      const heading = document.querySelector('.auth-gate .intro h1');
-      const card = document.querySelector('.auth-card');
+      const heading = document.querySelector('.intro h1');
+      const card = document.querySelector('.auth-card') || document.querySelector('.workspace');
       return {
         viewport: innerWidth,
         document: root.scrollWidth,

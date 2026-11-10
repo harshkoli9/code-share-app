@@ -15,7 +15,7 @@ export default function CodeEditor({ value, onChange, language, theme }) {
     let active = true;
     setLanguageExtension(null);
     const loadLanguage = languageLoaders[language];
-    if (loadLanguage) loadLanguage().then((extension) => { if (active) setLanguageExtension(extension); });
+    if (loadLanguage) loadLanguage().then((extension) => { if (active) setLanguageExtension(() => extension); });
     return () => { active = false; };
   }, [language]);
 
