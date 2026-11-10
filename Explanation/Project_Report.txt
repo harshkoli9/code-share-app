@@ -1,0 +1,388 @@
+CodeShare Project Report
+Prepared: 10 November 2026
+
+======================================================================
+1. PROJECT SUMMARY
+======================================================================
+
+CodeShare is a full-stack JavaScript application for creating, searching,
+editing, copying, exporting, and deleting code snippets. The browser client
+uses React, Vite, and CodeMirror. The API uses Node.js and Express. MongoDB
+stores users and snippets through Mongoose.
+
+An account is required before a visitor can enter the workspace or read
+snippets. New visitors see registration first. Existing users can switch to
+the sign-in form. Snippets are visible to signed-in users in the community;
+the author can edit or delete only their own records.
+
+The current deployment plan uses GitHub Pages for the static React bundle,
+a free Render web service for the Express API, and a free MongoDB Atlas
+cluster for persistent records. GitHub Pages cannot run the Node server.
+The Render API and Atlas database are required for registration, sign-in,
+and saved data.
+
+The application code and deployment configuration are prepared, but the
+public site is not live yet. Deployment requires a MongoDB connection URI,
+a Render service created from render.yaml, the Render URL added to GitHub as
+the VITE_API_BASE Actions variable, and GitHub Pages enabled for the repo.
+
+======================================================================
+2. PROJECT GOALS AND USER FLOWS
+======================================================================
+
+New account:
+  1. Open the site. The registration form is the first screen.
+  2. Enter a display name, email address, and password of at least 10
+     characters.
+  3. The API trims the name, normalizes the email, hashes the password,
+     creates the account, and returns a signed eight-hour session token.
+  4. The browser stores the token in sessionStorage and opens the workspace.
+
+Existing account:
+  1. Select "Sign in" in the registration panel.
+  2. Enter the account email and password.
+  3. On success, the API returns a new token and the workspace opens.
+
+Snippet work:
+  - Pick JavaScript, Python, HTML, CSS, Markdown, or plain text.
+  - Write code in CodeMirror and save it with a title.
+  - Search, paginate, copy code, and export all snippets as a ZIP archive.
+  - Edit or delete an owned snippet, or delete all of the account's own
+    snippets. The API checks ownership for each write operation.
+  - Switch between dark and light themes. The preference is stored locally.
+
+======================================================================
+3. TECHNOLOGY AND ARCHITECTURE
+======================================================================
+
+Browser:
+  React 18       Interface and state management.
+  Vite 6         Development server and production bundler.
+  CodeMirror 6   Lazy-loaded code editor and language modes.
+  JSZip          Lazy-loaded ZIP export.
+
+Server:
+  Node.js 20+    JavaScript runtime.
+  Express 4      JSON API, CORS, static local production serving.
+  Mongoose 8     MongoDB schemas, validation, and queries.
+  bcryptjs       One-way password hashing.
+  jsonwebtoken   Eight-hour signed bearer tokens.
+  Zod 4          Request body validation.
+  Helmet         Security response headers.
+  express-rate-limit  Login and API request limits.
+
+Request path:
+  Browser -> GitHub Pages static bundle
+          -> Authorization: Bearer <JWT>
+          -> Render Express API (/api/*)
+          -> MongoDB Atlas
+
+The GitHub Pages origin and the Render API use different host names. The
+client therefore uses a bearer token, not a cross-site cookie. The JWT is
+kept in sessionStorage and sent in an Authorization header. CORS on Render
+allows the configured GitHub Pages origin. Requests do not include cookies.
+
+======================================================================
+4. DIRECTORY GUIDE
+======================================================================
+
+index.html                     Vite document entry point.
+src/main.jsx                   React bootstrap and CSS imports.
+src/App.jsx                    Registration, sign-in, workspace, and snippet UI.
+src/CodeEditor.jsx             Lazy CodeMirror editor and language loaders.
+src/styles.css                 Base layout, cards, editor, and component styles.
+src/responsive.css             Theme contrast overrides and responsive layouts.
+
+server/index.js                Environment checks, Mongo connection, API startup.
+server/app.js                  Express middleware and route composition.
+server/models/User.js          Account schema and password-hash field.
+server/models/Snippet.js       Snippet schema, indexes, and ownership reference.
+server/middleware/auth.js      Bearer token verification and route guard.
+server/routes/auth.js          Registration, login, logout, and current account.
+server/routes/snippets.js      Search, pagination, create, edit, and deletion.
+server/scripts/migrate-firebase.js  One-time Firebase Realtime Database import.
+
+tests/api.test.js              API/auth/ownership/CORS and unavailable-DB checks.
+tests/browser.test.js          Headless Chrome registration/theme/responsive test.
+tests/theme-responsive.test.js Contrast and breakpoint checks.
+
+.github/workflows/pages.yml    CI test, production build, and Pages deployment.
+render.yaml                    Free Render API service definition.
+vite.config.js                 GitHub Pages base path and local API proxy.
+.env.example                   Local configuration template.
+package.json                   Scripts and dependency manifest.
+package-lock.json              Resolved JavaScript dependency versions.
+README.md                      Quick setup and hosting instructions.
+
+The PowerShell ModuleAnalysisCache and Firebase hosting cache were removed
+because they were generated local caches, not application source. Firebase
+configuration is no longer used at runtime. The importer still reads the old
+Firebase data when explicitly run.
+
+======================================================================
+5. DATA MODEL
+======================================================================
+
+User document:
+  name          Required display name; trimmed; maximum 40 characters.
+  email         Required normalized lower-case email; unique index.
+  passwordHash  Required bcrypt hash; excluded by default from queries.
+  timestamps    Created and updated dates.
+
+Snippet document:
+  title         Required title; maximum 120 characters.
+  code          Required source text; maximum 1,000,000 characters.
+  language      javascript | python | html | css | markdown | text.
+  owner         User ObjectId. Null only for imported legacy snippets.
+  authorName    Display label stored with the snippet.
+  legacyId      Optional unique Firebase key used for repeat-safe migration.
+  timestamps    Created and updated dates.
+
+No passwords, MongoDB credentials, or JWT secrets belong in source control.
+The .env file is ignored by Git; .env.example contains only placeholders.
+
+======================================================================
+6. API REFERENCE
+======================================================================
+
+GET    /api/health
+       Returns 200 when MongoDB and auth configuration are ready. Returns
+       503 with database_unavailable when the local database is not ready.
+
+POST   /api/auth/register
+       JSON: { name, email, password }. Returns { user, token }.
+
+POST   /api/auth/login
+       JSON: { email, password }. Returns { user, token }.
+
+GET    /api/auth/me
+       Requires Authorization: Bearer <token>. Returns the signed-in user.
+
+POST   /api/auth/logout
+       Stateless API response. The client signs out by removing its token.
+       A copied token remains valid until its eight-hour expiry.
+
+GET    /api/snippets?search=&page=&limit=
+       Requires a bearer token. Searches title, code, and author name.
+       Page size is capped at 100.
+
+POST   /api/snippets
+       Requires a bearer token. Creates a record owned by the token user.
+
+PUT    /api/snippets/:id
+       Requires a bearer token. Updates only a matching owned record.
+
+DELETE /api/snippets/:id
+       Requires a bearer token. Deletes only a matching owned record.
+
+DELETE /api/snippets/mine/all
+       Requires a bearer token. Deletes only records owned by that account.
+
+Authentication routes are rate-limited to 30 requests per 15 minutes per
+client address. Snippet routes are limited to 120 requests per minute.
+Malformed JSON returns 400, oversized requests return 413, invalid IDs
+return 400, and missing database configuration returns 503.
+
+======================================================================
+7. LOCAL SETUP AND CONFIGURATION
+======================================================================
+
+Requirements:
+  - Node.js 20.13+ (Node.js 22 is used in the current workspace).
+  - A MongoDB database. This can be a local MongoDB Community Server or
+    MongoDB Atlas Free.
+
+Steps:
+  1. Run npm ci.
+  2. Copy .env.example to .env.
+  3. Set MONGODB_URI to the local or Atlas connection URI.
+  4. Set JWT_SECRET to a random secret at least 32 characters long.
+  5. Keep CLIENT_ORIGIN=http://localhost:5173 for local Vite development.
+  6. Run npm run dev and open the Vite URL printed in the terminal.
+
+The local API defaults to port 5051. Vite proxies /api to localhost:5051.
+If 5173 is occupied, Vite automatically chooses another port and prints it.
+Set PORT in .env if 5051 is already occupied, and update the Vite proxy in
+vite.config.js to the same local API port.
+
+When MONGODB_URI is absent or Mongo cannot connect, the development server
+does not crash: Vite and Express still start, /api/health returns 503, and
+API actions explain that MongoDB must be configured. Registration and snippet
+storage remain unavailable until a database connection succeeds. If the URI
+is present but Mongo is temporarily down, the API retries the connection.
+
+For local Atlas use, create a database user, copy the driver connection URI,
+replace its password safely, and add the current client IP to the Atlas
+network access list. Never put the URI in source code or a frontend variable.
+
+======================================================================
+8. FREE HOSTING SETUP (GITHUB PAGES + RENDER + ATLAS)
+======================================================================
+
+GitHub Pages serves only static files; it cannot run Express or connect to
+MongoDB on the server side. The included workflow deploys the React bundle,
+while Render runs the API and Atlas stores data. No Netlify configuration is
+present.
+
+GitHub:
+  1. Push main to the code-share-app repository.
+  2. In repository Settings > Pages, choose GitHub Actions as the source.
+  3. The Actions workflow runs npm ci, npm test, and npm run build.
+  4. Set the Actions repository variable VITE_API_BASE to the Render API
+     origin, without a trailing slash. The workflow deliberately fails if
+     this variable is missing, so it cannot publish a client with a broken
+     API address.
+  5. The Vite build uses /code-share-app/ as its GitHub Pages base path.
+
+Render:
+  1. Create a Blueprint from this repository using render.yaml.
+  2. Set MONGODB_URI to the Atlas connection URI when Render prompts for it.
+  3. The Blueprint creates a free Node web service with PORT supplied by
+     Render, SERVE_CLIENT=false, the Pages CORS origin, a generated JWT_SECRET,
+     and /api/health as its health check.
+  4. Copy the service origin into the GitHub Actions variable VITE_API_BASE.
+
+Atlas:
+  1. Create a Free cluster and a database user with access to the CodeShare
+     database only.
+  2. Add the Render service's outbound IP ranges to Atlas Network Access.
+     Render's shared outbound ranges can change, so update the allowlist if
+     Render changes them. Avoid broad network access when the ranges suffice.
+  3. Store the connection URI only in Render's MONGODB_URI secret setting.
+
+Free-tier constraints:
+  - Atlas Free is for small development/hobby workloads. It has a 0.5 GB
+    storage cap, throughput limits, and may pause after 30 days without
+    connections. It is not a backup guarantee.
+  - Render Free services spin down after 15 idle minutes and may take about
+    a minute to wake. Free capacity can pause at monthly workspace limits.
+  - GitHub Pages is suitable for this public repository's static client.
+  - No paid option is enabled or required by these project files.
+
+======================================================================
+9. FIREBASE DATA MIGRATION
+======================================================================
+
+server/scripts/migrate-firebase.js is an explicit one-time importer. It
+fetches the old Realtime Database /snippets.json collection and writes
+valid records into MongoDB. Set FIREBASE_DATABASE_URL, optional
+FIREBASE_AUTH_TOKEN, and MONGODB_URI in a private .env, then run:
+
+  npm run migrate:firebase
+
+Firebase records are not deleted. legacyId makes repeated imports skip
+records already inserted. Records with invalid structure or code larger
+than 1,000,000 characters are skipped and counted. Old display names are
+preserved as author labels but do not become account owners; the old app
+never authenticated those display names.
+
+======================================================================
+10. SECURITY, ACCESSIBILITY, AND RESPONSIVENESS
+======================================================================
+
+Security measures:
+  - bcryptjs password hashing; raw passwords are never stored.
+  - Email normalization and unique database index.
+  - JWT signature and expiry validation on protected routes.
+  - Backend ownership predicates on edit and delete operations.
+  - Request body validation, input length limits, rate limiting, Helmet,
+    and a maximum JSON request body size.
+  - Production CORS is limited to the exact GitHub Pages origin.
+  - No third-party paid login, analytics, email, or storage integration.
+
+Known account limitations:
+  - Tokens expire after eight hours. Closing the browser tab clears
+    sessionStorage; the user signs in again in a new session.
+  - There is no email verification or password reset because those flows
+    require an email delivery provider and were not added.
+  - JWT logout removes the token from this tab but cannot revoke a copied
+    stateless token before expiry.
+  - All snippets are visible to every signed-in account; private visibility
+    and per-snippet sharing controls are not implemented.
+
+Theme and layout:
+  - Dark and light palettes were measured with WCAG contrast calculations.
+    Normal text palette combinations meet the 4.5:1 AA threshold. Automated
+    checks cover text, muted text, and secondary text against both surfaces.
+  - Chrome layout checks cover 320, 375, 768, 1024, and 1440 CSS pixels.
+    They assert no horizontal document overflow and ensure the registration
+    card and heading remain inside the viewport.
+  - The editor itself is loaded only after the workspace is available;
+    language modes and ZIP export are split into deferred bundles.
+
+======================================================================
+11. TESTS AND CURRENT RESULTS
+======================================================================
+
+Run the automated suite:
+  npm test
+
+Current results:
+  - API integration test with model fakes: pass. Covers registration,
+    normalized email, trimmed name, password hashing, duplicate accounts,
+    wrong/correct login, bearer authentication, unauthenticated access,
+    snippet create/list/update/delete ownership, bulk ownership, CORS allow
+    and deny, and malformed JSON.
+  - Missing database test: pass. Health and registration return 503 while
+    the API process stays available.
+  - Headless Chrome test: pass at 320, 375, 768, 1024, and 1440 pixels. It
+    checks registration-first behavior, the existing-account login toggle,
+    theme toggling, and horizontal overflow.
+  - Theme contrast test: pass. Minimum checked ratios include 4.53:1 for
+    light secondary text and 4.63:1 for light muted text on the tested
+    surfaces; remaining normal-text combinations are higher.
+  - Production build: pass. The main JavaScript entry is about 27 KB
+    minified; the editor loads as a separate 413 KB chunk (about 135 KB
+    gzip), and language modes are separate lazy chunks.
+  - npm audit: zero reported vulnerabilities after moving Zod to its fixed
+    major release and removing the vulnerable nodemon dependency.
+
+The API tests stub the Mongoose model methods, so they verify API and
+authorization behavior without requiring a database. A real registration,
+database persistence, Render health, and GitHub Pages end-to-end smoke test
+must be run after MONGODB_URI and hosting settings are configured.
+
+======================================================================
+12. TROUBLESHOOTING
+======================================================================
+
+"MONGODB_URI is missing":
+  Copy .env.example to .env and set MONGODB_URI. .env.example is a template,
+  not an automatically loaded connection string.
+
+"Database is not configured or is unavailable":
+  Confirm that the local MongoDB process is running, or verify the Atlas URI,
+  database password encoding, and Atlas network access list. The UI can load
+  without a database, but authentication and data APIs intentionally return
+  503 until the connection works.
+
+"EADDRINUSE":
+  Another local service is using the selected port. Vite chooses another
+  frontend port automatically. Change PORT in .env and make vite.config.js
+  proxy point to the same free API port.
+
+GitHub workflow says VITE_API_BASE is missing:
+  Create the Actions repository variable after the Render API service exists,
+  then re-run the build and deploy workflow.
+
+GitHub Pages loads but auth fails:
+  Check the Actions VITE_API_BASE value, Render service health, Atlas
+  connectivity, and Render CLIENT_ORIGIN. It must exactly match
+  https://harshkoli9.github.io.
+
+======================================================================
+13. HANDOFF CHECKLIST
+======================================================================
+
+Before sharing this project with another developer:
+  [ ] Install Node.js 20.13+ and run npm ci.
+  [ ] Create .env from .env.example for local work.
+  [ ] Configure a MongoDB database and JWT_SECRET.
+  [ ] Run npm test and npm run build.
+  [ ] For hosting, create the Atlas Free cluster and Render Blueprint.
+  [ ] Set GitHub Actions variable VITE_API_BASE and enable Pages Actions.
+  [ ] Never commit .env, Atlas credentials, or JWT secrets.
+  [ ] Run a live register/login/create/reload/edit/delete smoke test.
+
+The quick-start guide is in README.md. This report is the deeper project
+handoff and architecture reference.

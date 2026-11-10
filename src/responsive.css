@@ -1,0 +1,147 @@
+:root {
+  font-family: "Segoe UI", Arial, sans-serif;
+  --dim: #9aa9be;
+}
+
+.app-shell {
+  --dim: #9aa9be;
+}
+
+.app-shell.light {
+  --dim: #68746b;
+  --danger: #ad3328;
+}
+
+body {
+  min-width: 320px;
+}
+
+.auth-gate {
+  min-height: calc(100vh - 140px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  align-items: center;
+  gap: 54px;
+  padding-top: 25px;
+  padding-bottom: 25px;
+}
+
+.auth-gate .intro {
+  max-width: none;
+  padding: 20px 0;
+}
+
+.auth-gate .auth-card {
+  position: static;
+  width: 100%;
+  max-width: 380px;
+}
+
+.editor-loading {
+  min-height: 250px;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  font: 12px Consolas, "Courier New", monospace;
+}
+
+@media (max-width: 900px) {
+  .auth-gate {
+    grid-template-columns: minmax(0, 1fr) 310px;
+    gap: 25px;
+  }
+
+  .auth-gate .intro {
+    max-width: none;
+    padding: 20px 0;
+  }
+
+  .auth-gate .intro h1 {
+    font-size: 42px;
+  }
+}
+
+@media (max-width: 650px) {
+  .auth-gate {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding-top: 12px;
+  }
+
+  .auth-gate .intro {
+    padding: 34px 0 8px;
+  }
+
+  .auth-gate .intro h1 {
+    font-size: 42px;
+  }
+
+  .auth-gate .auth-card {
+    max-width: none;
+    margin: 9px 0 22px;
+  }
+
+  .saved-tools {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .saved-tools .export-button {
+    flex: 1 1 auto;
+  }
+
+  .editor-footer > div {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 380px) {
+  .layout,
+  .site-footer {
+    width: 92vw;
+  }
+
+  .topbar {
+    padding-inline: 4vw;
+  }
+
+  .brand {
+    gap: 7px;
+    font-size: 15px;
+  }
+
+  .intro h1,
+  .auth-gate .intro h1 {
+    font-size: 34px;
+    letter-spacing: -1.5px;
+  }
+
+  .editor-topline > span:nth-child(2),
+  .language-select > span {
+    display: none;
+  }
+
+  .editor-topline {
+    gap: 7px;
+    padding-inline: 9px;
+  }
+
+  .top-actions {
+    gap: 6px;
+  }
+
+  .editor-footer > div {
+    gap: 5px;
+  }
+
+  .editor-footer .button {
+    padding-inline: 7px;
+  }
+}
