@@ -29,25 +29,80 @@ test("Chrome checks registration flow and responsive layout from 320px to deskto
 }, async (t) => {
   const profile = mkdtempSync(path.join(tmpdir(), "codeshare-chrome-"));
   const vite = spawn(process.execPath, [path.join(projectRoot, "node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5183", "--strictPort"], {
-    cwd: projectRoot, stdio: "ignore", windowsHide: true,
+    cwd: projectRoot, stdio: "ignore", windowsHide: true, detached: process.platform !== "win32",
   });
   const chrome = spawn(browser, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
     "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
-  ], { stdio: "ignore", windowsHide: true });
+  ], { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" });
+
+  function hasExited(child) {
+    return child.exitCode !== null || child.signalCode !== null;
+  }
+
+  async function waitForExit(child, timeoutMs) {
+    if (hasExited(child)) return true;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      function finish(exited) {
+        clearTimeout(timer);
+        child.removeListener("close", onClose);
+        resolve(exited);
+      }
+      function onClose() { finish(true); }
+      child.once("close", onClose);
+      if (hasExited(child)) finish(true);
+    });
+  }
 
   async function stopProcess(child) {
-    if (!child.pid || child.exitCode !== null) return;
-    if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-    else child.kill("SIGTERM");
+    if (!child.pid || hasExited(child)) return;
+    if (process.platform === "win32") {
+      const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      if (result.error) throw result.error;
+    } else {
+      try { process.kill(-child.pid, "SIGTERM"); }
+      catch (error) { if (error.code !== "ESRCH") throw error; }
+    }
+
+    if (await waitForExit(child, 5000)) return;
+    if (process.platform === "win32") {
+      const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      if (result.error) throw result.error;
+    } else {
+      try { process.kill(-child.pid, "SIGKILL"); }
+      catch (error) { if (error.code !== "ESRCH") throw error; }
+    }
+    if (!await waitForExit(child, 5000)) {
+      throw new Error(`Timed out waiting for process ${child.pid} to exit`);
+    }
+  }
+
+  async function removeProfileWithRetry(directory) {
+    const retryable = new Set(["ENOTEMPTY", "EBUSY"]);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        rmSync(directory, { recursive: true, force: true, maxRetries: 0 });
+        return;
+      } catch (error) {
+        if (!retryable.has(error.code) || attempt >= 7) throw error;
+        await delay(Math.min(100 * (2 ** attempt), 1500));
+      }
+    }
   }
 
   let socket;
   t.after(async () => {
-    socket?.close();
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      await new Promise((resolve) => {
+        socket.addEventListener("close", resolve, { once: true });
+        socket.close();
+        if (socket.readyState === WebSocket.CLOSED) resolve();
+      });
+    }
     await stopProcess(chrome);
     await stopProcess(vite);
-    rmSync(profile, { recursive: true, force: true });
+    await removeProfileWithRetry(profile);
   });
 
   async function waitFor(check, message) {
