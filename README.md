@@ -45,7 +45,7 @@ The Pages address for this repository is `https://harshkoli9.github.io/code-shar
 - `PUT /api/snippets/:id` — update an owned snippet.
 - `DELETE /api/snippets/:id` and `DELETE /api/snippets/mine/all` — delete one or all owned snippets.
 
-For local same-origin work, leave `VITE_API_BASE` blank. For the GitHub Pages build, the Actions workflow supplies it from the repository variable.
+For local same-origin work, leave `VITE_API_BASE` blank and Vite proxies `/api` to the local Express server. The GitHub Pages workflow builds with `https://codeshare-api-harshkoli9.onrender.com` as `VITE_API_BASE`; set the repository Actions variable of the same name only if the Render API hostname changes. The Render service is API-only, so `GET /` is not a frontend route; use `GET /api/health` to check service and database readiness.
 
 ## Import existing Firebase snippets
 
