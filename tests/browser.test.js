@@ -13,7 +13,9 @@ const candidates = process.platform === "win32"
   : process.platform === "darwin"
     ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
     : ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"];
-const browser = candidates.find(existsSync) || (() => {
+const browser = process.env.CHROME_BIN && existsSync(process.env.CHROME_BIN)
+  ? process.env.CHROME_BIN
+  : candidates.find(existsSync) || (() => {
   const command = process.platform === "win32" ? "where.exe" : "which";
   for (const name of ["chrome", "chromium", "chromium-browser", "google-chrome", "msedge"]) {
     const result = spawnSync(command, [name], { encoding: "utf8", windowsHide: true });
@@ -21,20 +23,24 @@ const browser = candidates.find(existsSync) || (() => {
     if (result.status === 0 && found) return found;
   }
   return null;
-})();
+  })();
 
-test("Chrome checks registration flow and responsive layout from 320px to desktop", {
-  skip: !browser && "Chrome or Edge is not installed; browser smoke test skipped.",
-  timeout: 60000,
-}, async (t) => {
+test("Chrome checks registration flow and responsive layout from 320px to desktop", { timeout: 60000 }, async (t) => {
+  assert.ok(browser, "Chrome or Edge is required for the browser test; install it or set CHROME_BIN.");
   const profile = mkdtempSync(path.join(tmpdir(), "codeshare-chrome-"));
   const vite = spawn(process.execPath, [path.join(projectRoot, "node_modules/vite/bin/vite.js"), "--host", "127.0.0.1", "--port", "5183", "--strictPort"], {
     cwd: projectRoot, stdio: "ignore", windowsHide: true, detached: process.platform !== "win32",
   });
   const chrome = spawn(browser, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
-  ], { stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" });
+    "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-extensions",
+    "--remote-allow-origins=*", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
+  ], { stdio: ["ignore", "ignore", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
+  let chromeStderr = "";
+  chrome.stderr.setEncoding("utf8");
+  chrome.stderr.on("data", (chunk) => {
+    chromeStderr = (chromeStderr + chunk).slice(-30000);
+  });
 
   function hasExited(child) {
     return child.exitCode !== null || child.signalCode !== null;
@@ -114,13 +120,39 @@ test("Chrome checks registration flow and responsive layout from 320px to deskto
     throw new Error(`Timed out waiting for ${message}`);
   }
 
+  async function waitForDevToolsPort(portFile) {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (hasExited(chrome)) {
+        await waitForExit(chrome, 1000);
+        throw new Error([
+          `Chrome exited before DevTools started (exit code: ${chrome.exitCode ?? "unknown"}; signal: ${chrome.signalCode ?? "none"}).`,
+          `Executable: ${browser}`,
+          `stderr:\n${chromeStderr.trim() || "<empty>"}`,
+        ].join("\n"));
+      }
+      try {
+        const port = Number(readFileSync(portFile, "utf8").split(/\r?\n/)[0]);
+        if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
+      } catch (error) {
+        if (error.code !== "ENOENT" && error.code !== "EACCES") throw error;
+      }
+      await delay(100);
+    }
+    throw new Error([
+      `Timed out waiting for Chrome DevTools port in ${portFile}.`,
+      `Executable: ${browser}`,
+      `Exit code: ${chrome.exitCode ?? "still running"}; signal: ${chrome.signalCode ?? "none"}`,
+      `stderr:\n${chromeStderr.trim() || "<empty>"}`,
+    ].join("\n"));
+  }
+
   await waitFor(async () => {
     try { return (await fetch("http://127.0.0.1:5183/")).ok; } catch { return false; }
   }, "Vite server");
 
   const portFile = path.join(profile, "DevToolsActivePort");
-  await waitFor(() => existsSync(portFile), "Chrome DevTools port");
-  const debugPort = Number(readFileSync(portFile, "utf8").split(/\r?\n/)[0]);
+  const debugPort = await waitForDevToolsPort(portFile);
   const newPage = await fetch(`http://127.0.0.1:${debugPort}/json/new?http://127.0.0.1:5183/`, { method: "PUT" });
   assert.equal(newPage.ok, true, "Chrome exposes a DevTools page target");
   const { webSocketDebuggerUrl } = await newPage.json();

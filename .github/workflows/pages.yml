@@ -28,8 +28,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+      - name: Verify Chrome executable
+        run: |
+          test -x "$CHROME_BIN"
+          "$CHROME_BIN" --version
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
       - run: npm ci
       - run: npm test
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
       - name: Check API configuration
         run: |
           if [ -z "$VITE_API_BASE" ]; then
