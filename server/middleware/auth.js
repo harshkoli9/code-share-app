@@ -10,8 +10,9 @@ async function resolveUser(req) {
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   if (token) {
     try {
-      const { userId } = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(userId).select("name email");
+      const { userId, authVersion = 0 } = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(userId).select("name email authVersion");
+      if (user && (user.authVersion || 0) === authVersion) req.user = user;
     } catch {
       // An expired or invalid token simply represents a signed-out visitor.
     }

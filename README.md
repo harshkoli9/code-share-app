@@ -7,7 +7,7 @@ CodeShare is a MERN code-snippet workspace. React and CodeMirror provide the int
 Requirements: Node.js 20.13 or newer and a running MongoDB instance or Atlas connection string.
 
 1. Run `npm ci`.
-2. Copy `.env.example` to `.env`; set `MONGODB_URI` and a random `JWT_SECRET` with at least 32 characters.
+2. Copy `.env.example` to `.env`; set `MONGODB_URI` and a random `JWT_SECRET` with at least 32 characters. To enable password recovery, also set a Resend API key, a verified sender in `EMAIL_FROM`, and your frontend origin in `FRONTEND_URL`. If email settings are missing, recovery reports that setup is incomplete and does not claim to send mail.
 3. Run `npm run dev`.
 4. Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Vite forwards `/api` to Express on port 5051.
 
@@ -25,6 +25,10 @@ The client is published with GitHub Pages. Express runs as a free Render web ser
 
 The Pages address for this repository is `https://harshkoli9.github.io/code-share-app/`. Free Render services sleep after 15 minutes without traffic and may take about a minute to wake. Atlas Free has storage and throughput limits and can pause after extended inactivity. These are free-tier limits; no paid add-on is required for this setup.
 
+### Render password recovery variables
+
+Set `RESEND_API_KEY` from Resend, `EMAIL_FROM` to a sender identity verified with Resend (for example, `CodeShare <no-reply@yourdomain.com>`), and `FRONTEND_URL` to `https://harshkoli9.github.io/code-share-app` (no trailing slash). Password recovery requests are limited to five per hour per client. Tokens are single-use, stored as SHA-256 hashes, and expire after 15 minutes. A successful reset invalidates existing JWT sessions.
+
 ## Authentication and data rules
 
 - Registration normalizes email addresses, trims display names, and requires a password of at least 10 characters.
@@ -40,6 +44,7 @@ The Pages address for this repository is `https://harshkoli9.github.io/code-shar
 - `GET /api/health` — service readiness.
 - `POST /api/auth/register` and `POST /api/auth/login` — create an account or issue a session token.
 - `GET /api/auth/me` — return the authenticated account.
+- `POST /api/auth/forgot-password` and `POST /api/auth/reset-password` — send and consume a single-use, 15 minute reset link.
 - `GET /api/snippets?search=&page=&limit=` — authenticated, paginated snippet search.
 - `POST /api/snippets` — create a snippet.
 - `PUT /api/snippets/:id` — update an owned snippet.

@@ -18,24 +18,33 @@ const serialize = (snippet) => ({
   author: snippet.authorName,
   ownerId: snippet.owner?.toString() || null,
   createdAt: snippet.createdAt,
+  updatedAt: snippet.updatedAt,
 });
 
 router.get("/", requireAuth, asyncRoute(async (req, res) => {
   const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
   const search = String(req.query.search || "").trim().slice(0, 100);
-  const query = search
-    ? { $or: [
+  const language = String(req.query.language || "");
+  const query = {
+    ...(language && inputSchema.shape.language.safeParse(language).success ? { language } : {}),
+    ...(search ? { $or: [
         { title: { $regex: escapeRegex(search), $options: "i" } },
         { code: { $regex: escapeRegex(search), $options: "i" } },
         { authorName: { $regex: escapeRegex(search), $options: "i" } },
-      ] }
-    : {};
+      ] } : {}),
+  };
   const [items, total] = await Promise.all([
     Snippet.find(query).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Snippet.countDocuments(query),
   ]);
   res.json({ snippets: items.map(serialize), page, pages: Math.ceil(total / limit), total });
+}));
+
+router.get("/:id", requireAuth, asyncRoute(async (req, res) => {
+  const snippet = await Snippet.findById(req.params.id).lean();
+  if (!snippet) return res.status(404).json({ message: "Snippet not found." });
+  res.json({ snippet: serialize(snippet) });
 }));
 
 router.post("/", requireAuth, asyncRoute(async (req, res) => {

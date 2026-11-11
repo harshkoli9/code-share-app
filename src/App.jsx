@@ -4,9 +4,19 @@ const CodeEditor = lazy(() => import("./CodeEditor.jsx"));
 const languages = ["javascript", "python", "html", "css", "markdown", "text"];
 const blank = "// Start writing your code here.\n";
 
-function AuthPanel({ authMode, setAuthMode, authError, setAuthError, authBusy, submitAuth }) {
+function AuthPanel({ authMode, setAuthMode, authError, setAuthError, authBusy, submitAuth, submitRecovery, resetToken, recoverySent, notice }) {
+  if (authMode === "forgot" || authMode === "reset") return <section className="auth-card">
+    <div className="auth-heading"><div><h2>{authMode === "forgot" ? "Reset your password" : "Choose a new password"}</h2><p>{authMode === "forgot" ? "We’ll email a secure reset link if an account matches." : "Choose a password with at least 10 characters."}</p></div></div>
+    {recoverySent ? <p className="form-success" role="status">If an account matches that email, a reset link will arrive shortly.</p> : <form onSubmit={authMode === "forgot" ? submitRecovery : submitAuth} className="auth-form">
+      {authMode === "forgot" ? <label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required placeholder="you@example.com" /></label> : <><input type="hidden" name="token" value={resetToken} /><label>New password<input name="password" type="password" autoComplete="new-password" minLength="10" maxLength="72" required placeholder="At least 10 characters" /></label></>}
+      {authError && <p className="form-error" role="alert">{authError}</p>}
+      <button className="button button-primary auth-submit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "forgot" ? "Send reset link" : "Update password"}</button>
+    </form>}
+    <p className="auth-switch"><button type="button" onClick={() => { setAuthMode("login"); setAuthError(""); }}>Back to sign in</button></p>
+  </section>;
   return <section className="auth-card">
     <div className="auth-heading"><span className="auth-icon">{authMode === "register" ? "✳" : "↗"}</span><div><h2>{authMode === "register" ? "Create your account" : "Welcome back"}</h2><p>{authMode === "register" ? "Register to open your workspace." : "Sign in to return to your workspace."}</p></div></div>
+    {authMode === "login" && notice && <p className="form-success" role="status">{notice}</p>}
     <form onSubmit={submitAuth} className="auth-form">
       {authMode === "register" && <label>Your name<input name="name" autoComplete="name" maxLength="40" required placeholder="Ada Lovelace" /></label>}
       <label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required placeholder="you@example.com" /></label>
@@ -14,6 +24,7 @@ function AuthPanel({ authMode, setAuthMode, authError, setAuthError, authBusy, s
       {authError && <p className="form-error" role="alert">{authError}</p>}
       <button className="button button-primary auth-submit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "register" ? "Create account" : "Sign in"}<span>→</span></button>
     </form>
+    {authMode === "login" && <p className="auth-switch"><button type="button" onClick={() => { setAuthMode("forgot"); setAuthError(""); }}>Forgot Password?</button></p>}
     <p className="auth-switch">{authMode === "register" ? "Already have an account?" : "New to CodeShare?"} <button type="button" onClick={() => { setAuthMode(authMode === "register" ? "login" : "register"); setAuthError(""); }}>{authMode === "register" ? "Sign in" : "Create an account"}</button></p>
     <p className="auth-note"><span>▣</span> Your password is hashed before storage.</p>
   </section>;
@@ -45,6 +56,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [snippets, setSnippets] = useState([]);
   const [query, setQuery] = useState("");
+  const [languageFilter, setLanguageFilter] = useState("");
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [title, setTitle] = useState("");
@@ -54,6 +66,12 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
+  const [resetToken, setResetToken] = useState(() => location.hash.startsWith("#reset/") ? location.hash.slice(7) : "");
+  const [recoverySent, setRecoverySent] = useState(false);
+
+  useEffect(() => {
+    if (resetToken) setAuthMode("reset");
+  }, [resetToken]);
 
   useEffect(() => {
     if (!sessionStorage.getItem("codeshare_token")) { setAuthReady(true); return; }
@@ -65,17 +83,23 @@ export default function App() {
 
   const loadSnippets = useCallback(async () => {
     if (!user) return;
+    if (location.hash.startsWith("#snippet=")) return;
     try {
-      const data = await api(`/snippets?search=${encodeURIComponent(query)}&page=${page}&limit=30`);
+      const data = await api(`/snippets?search=${encodeURIComponent(query)}&language=${encodeURIComponent(languageFilter)}&page=${page}&limit=30`);
       setSnippets(data.snippets);
       setPages(Math.max(1, data.pages));
     } catch (error) { setNotice(error.message); }
-  }, [query, page, user]);
+  }, [query, languageFilter, page, user]);
 
   useEffect(() => {
     const timeout = setTimeout(loadSnippets, 180);
     return () => clearTimeout(timeout);
   }, [loadSnippets]);
+  useEffect(() => {
+    const sharedId = location.hash.startsWith("#snippet=") ? location.hash.slice(9) : "";
+    if (!user || !sharedId) return;
+    api(`/snippets/${encodeURIComponent(sharedId)}`).then(({ snippet }) => { setSnippets([snippet]); setPages(1); }).catch((error) => setNotice(error.message));
+  }, [user]);
   useEffect(() => { localStorage.setItem("theme", theme); }, [theme]);
 
   async function submitAuth(event) {
@@ -83,6 +107,12 @@ export default function App() {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
+      if (authMode === "reset") {
+        await api("/auth/reset-password", { method: "POST", body: JSON.stringify({ token: form.get("token"), password: form.get("password") }) });
+        history.replaceState(null, "", location.pathname + location.search);
+        setResetToken(""); setAuthMode("login"); setNotice("Password updated. Sign in with your new password.");
+        formElement.reset(); return;
+      }
       const path = authMode === "register" ? "/auth/register" : "/auth/login";
       const data = await api(path, { method: "POST", body: JSON.stringify({
         ...(authMode === "register" ? { name: form.get("name") } : {}),
@@ -92,6 +122,13 @@ export default function App() {
       setUser(data.user);
       formElement.reset();
     } catch (error) { setAuthError(error.message); }
+    finally { setAuthBusy(false); }
+  }
+
+  async function submitRecovery(event) {
+    event.preventDefault(); setAuthError(""); setAuthBusy(true);
+    try { const form = new FormData(event.currentTarget); await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email: form.get("email") }) }); setRecoverySent(true); }
+    catch (error) { setAuthError(error.message); }
     finally { setAuthBusy(false); }
   }
 
@@ -190,7 +227,7 @@ export default function App() {
         <p className="intro-copy">Create an account or sign in to open your workspace, save code, and share snippets with the signed-in community.</p>
         <div className="intro-meta"><span><b>01</b> Create your account</span><span><b>02</b> Save and share snippets</span></div>
       </section>
-      <AuthPanel authMode={authMode} setAuthMode={setAuthMode} authError={authError} setAuthError={setAuthError} authBusy={authBusy} submitAuth={submitAuth} />
+      <AuthPanel authMode={authMode} setAuthMode={setAuthMode} authError={authError} setAuthError={setAuthError} authBusy={authBusy} submitAuth={submitAuth} submitRecovery={submitRecovery} resetToken={resetToken} recoverySent={recoverySent} notice={notice} />
     </main> : <main id="top" className="layout">
       <section className="intro">
         <p className="eyebrow"><span className="live-dot" /> A quieter place for good code</p>
@@ -211,9 +248,9 @@ export default function App() {
       </section>
 
       <section className="saved-section">
-        <div className="saved-heading"><div><p className="eyebrow">FROM THE COMMUNITY</p><h2>Saved snippets <span className="count">{snippets.length}</span></h2></div><div className="saved-tools"><label className="search-box"><span>⌕</span><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search snippets…" /></label>{user && <button className="button button-quiet export-button" onClick={deleteMySnippets}>Delete mine</button>}<button className="button button-quiet export-button" onClick={exportZip}>↓ <span>Export all</span></button></div></div>
-        <div className="snippet-grid">{snippets.map((snippet) => <article className="snippet-card" key={snippet.id}><div className="snippet-card-head"><span className="language-pill">{snippet.language}</span><time>{new Date(snippet.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</time></div><h3>{snippet.title}</h3><p className="snippet-author">by <span>{snippet.author}</span></p><pre><code>{snippet.code}</code></pre><footer><button className="text-action" onClick={() => copy(snippet.code)}>Copy code <span>↗</span></button>{user?.id === snippet.ownerId && <div><button className="text-action" onClick={() => editSnippet(snippet)}>Edit</button><button className="text-action danger-action" onClick={() => deleteSnippet(snippet)}>Delete</button></div>}</footer></article>)}
-          {!snippets.length && <div className="empty-state"><span>⌘</span><h3>{query ? "No matching snippets" : "A clean slate."}</h3><p>{query ? "Try another search term." : "The next useful snippet could be yours."}</p></div>}
+        <div className="saved-heading"><div><p className="eyebrow">FROM THE COMMUNITY</p><h2>Saved snippets <span className="count">{snippets.length}</span></h2></div><div className="saved-tools"><label className="search-box"><span>⌕</span><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search snippets…" /></label><label className="filter-label"><span className="sr-only">Filter by language</span><select aria-label="Filter by language" value={languageFilter} onChange={(event) => { setLanguageFilter(event.target.value); setPage(1); }}><option value="">All languages</option>{languages.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>{user && <button className="button button-quiet export-button" onClick={deleteMySnippets}>Delete mine</button>}<button className="button button-quiet export-button" onClick={exportZip}>↓ <span>Export all</span></button></div></div>
+        <div className="snippet-grid">{snippets.map((snippet) => <article className="snippet-card" key={snippet.id}><div className="snippet-card-head"><span className="language-pill">{snippet.language}</span><time>{new Date(snippet.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</time></div><h3>{snippet.title}</h3><p className="snippet-author">by <span>{snippet.author}</span></p><pre><code>{snippet.code}</code></pre><footer><div><button className="text-action" onClick={() => copy(snippet.code)}>Copy code</button><button className="text-action" onClick={() => copy(`${location.origin}${location.pathname}#snippet=${snippet.id}`)}>Share link</button></div>{user?.id === snippet.ownerId && <div><button className="text-action" onClick={() => editSnippet(snippet)}>Edit</button><button className="text-action danger-action" onClick={() => deleteSnippet(snippet)}>Delete</button></div>}</footer></article>)}
+          {!snippets.length && <div className="empty-state"><span>⌘</span><h3>{query || languageFilter ? "No matching snippets" : "A clean slate."}</h3><p>{query || languageFilter ? "Try another search term or language." : "The next useful snippet could be yours."}</p>{!query && !languageFilter && <button className="button button-primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Create your first snippet</button>}</div>}
         </div>
         {pages > 1 && <nav className="pagination" aria-label="Snippet pages"><button className="button button-quiet" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Previous</button><span>Page {page} of {pages}</span><button className="button button-quiet" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next →</button></nav>}
       </section>

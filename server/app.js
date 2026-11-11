@@ -28,7 +28,9 @@ export function createApp({ serveClient = true, databaseReady = () => true } = {
     res.status(503).json({ message: "Database is not configured or is unavailable. Set MONGODB_URI and start MongoDB." });
   });
   app.use("/api", optionalAuth);
-  app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }), authRoutes);
+  app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api/auth/forgot-password", rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api/auth", authRoutes);
   app.use("/api/snippets", rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false }), snippetRoutes);
   app.use("/api", (_req, res) => res.status(404).json({ message: "API endpoint not found." }));
 

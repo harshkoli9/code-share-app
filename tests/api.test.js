@@ -19,6 +19,7 @@ test("API enforces registration, valid credentials, sessions, and snippet owners
     exists: User.exists,
     create: User.create,
     findOne: User.findOne,
+    userFindOneAndUpdate: User.findOneAndUpdate,
     findById: User.findById,
     find: Snippet.find,
     countDocuments: Snippet.countDocuments,
@@ -38,6 +39,9 @@ test("API enforces registration, valid credentials, sessions, and snippet owners
   let createdSnippet;
   let deleteFilter;
   let snippets = [];
+  let resetConsumed = false;
+  let resetFilter;
+  let resetUpdate;
 
   User.exists = async () => accountExists;
   User.create = async ({ name, email, passwordHash }) => {
@@ -46,6 +50,14 @@ test("API enforces registration, valid credentials, sessions, and snippet owners
     return account;
   };
   User.findOne = () => ({ select: async () => account });
+  User.findOneAndUpdate = async (filter, update) => {
+    resetFilter = filter;
+    resetUpdate = update;
+    if (resetConsumed) return null;
+    resetConsumed = true;
+    account.authVersion = (account.authVersion || 0) + 1;
+    return account;
+  };
   User.findById = () => ({ select: async () => ({ id: account.id, name: account.name, email: account.email }) });
   Snippet.find = () => ({
     sort() { return this; },
@@ -79,7 +91,7 @@ test("API enforces registration, valid credentials, sessions, and snippet owners
   const origin = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    Object.assign(User, { exists: originals.exists, create: originals.create, findOne: originals.findOne, findById: originals.findById });
+    Object.assign(User, { exists: originals.exists, create: originals.create, findOne: originals.findOne, findOneAndUpdate: originals.userFindOneAndUpdate, findById: originals.findById });
     Object.assign(Snippet, {
       find: originals.find,
       countDocuments: originals.countDocuments,
@@ -210,6 +222,28 @@ test("API enforces registration, valid credentials, sessions, and snippet owners
     body: "{not-json",
   });
   assert.equal(badJson.status, 400, "malformed JSON receives a client error");
+
+  const originalEmailConfig = { resend: process.env.RESEND_API_KEY, from: process.env.EMAIL_FROM, frontend: process.env.FRONTEND_URL };
+  delete process.env.RESEND_API_KEY;
+  delete process.env.EMAIL_FROM;
+  delete process.env.FRONTEND_URL;
+  const emailUnavailable = await request("/api/auth/forgot-password", { method: "POST", body: { email: "ada@example.com" } });
+  assert.equal(emailUnavailable.status, 503, "recovery does not claim delivery when email is not configured");
+  assert.match((await emailUnavailable.json()).message, /not configured/i);
+  for (const [key, value] of [["RESEND_API_KEY", originalEmailConfig.resend], ["EMAIL_FROM", originalEmailConfig.from], ["FRONTEND_URL", originalEmailConfig.frontend]]) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  const weakReset = await request("/api/auth/reset-password", { method: "POST", body: { token: "a".repeat(43), password: "short" } });
+  assert.equal(weakReset.status, 400, "reset passwords enforce the minimum length");
+  const newPassword = "a newly chosen secure password";
+  const reset = await request("/api/auth/reset-password", { method: "POST", body: { token: "example-single-use-token-value-1234567890", password: newPassword } });
+  assert.equal(reset.status, 200);
+  assert.equal(resetFilter.resetTokenExpiresAt.$gt instanceof Date, true, "expired links are excluded by the atomic consume query");
+  assert.equal(typeof resetFilter.resetTokenHash, "string", "the lookup uses a token hash");
+  assert.equal(resetUpdate.$inc.authVersion, 1, "password reset invalidates existing sessions");
+  assert.equal(await bcrypt.compare(newPassword, resetUpdate.$set.passwordHash), true, "the replacement password is hashed");
+  const reused = await request("/api/auth/reset-password", { method: "POST", body: { token: "example-single-use-token-value-1234567890", password: newPassword } });
+  assert.equal(reused.status, 400, "a consumed reset link cannot be reused");
 });
 
 test("local server health fails closed but stays available without MongoDB", async (t) => {
